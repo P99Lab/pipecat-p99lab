@@ -69,6 +69,21 @@ async def test_analyze_after_complete_returns_metrics_once(make_analyzer):
     assert await analyzer.analyze_end_of_turn() == (EndOfTurnState.INCOMPLETE, None)
 
 
+async def test_unread_complete_does_not_end_the_next_turn(make_analyzer):
+    # Pipecat 0.0.x does not call analyze_end_of_turn after append_audio
+    # returns COMPLETE. The next turn's first VAD stop must get a fresh score.
+    analyzer = make_analyzer(params=Turn1MiniParams(pre_speech_ms=0))
+    feed(analyzer, tone(1.6), is_speech=True)
+    assert feed(analyzer, silence(2.0), is_speech=False)[0] == EndOfTurnState.COMPLETE
+
+    feed(analyzer, tone(1.6), is_speech=True)
+    feed(analyzer, silence(0.2), is_speech=False)
+    state, metrics = await analyzer.analyze_end_of_turn()
+    assert state == EndOfTurnState.INCOMPLETE
+    assert metrics.probability == pytest.approx(0.2)
+    assert analyzer.speech_triggered is True
+
+
 async def test_analyze_at_vad_stop_reads_the_score_between_step_boundaries(make_analyzer):
     # 1.0 s of tone, then 0.2 s of silence still flagged as speech (the VAD's
     # stop delay): 1.2 s = 7.5 steps, so half a step is pending when the VAD

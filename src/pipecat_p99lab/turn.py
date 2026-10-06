@@ -235,6 +235,11 @@ class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
         audio_int16 = np.frombuffer(buffer, dtype=np.int16)
         if len(audio_int16) == 0:
             return EndOfTurnState.INCOMPLETE
+        # A COMPLETE returned by the previous call is only valid until more
+        # audio arrives. Pipecat 0.0.x never asks for it, and it must not end
+        # the next turn at its first pause.
+        self._pending_complete = False
+        self._pending_metrics = None
         audio = self._to_model_rate(audio_int16.astype(np.float32) / 32768.0)
 
         if is_speech:
