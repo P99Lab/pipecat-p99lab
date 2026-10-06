@@ -8,5 +8,5 @@
 
 from pipecat_p99lab.turn import LocalTurn1MiniAnalyzer, Turn1MiniParams
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = ["LocalTurn1MiniAnalyzer", "Turn1MiniParams"]

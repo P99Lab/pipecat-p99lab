@@ -4,6 +4,13 @@ All notable changes to `pipecat-p99lab` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] - 2026-10-06
+
+### Changed
+
+- Installs alongside Pipecat 0.0.108 and later (previously required 1.12). On 0.0.x, pass the analyzer as
+  `turn_analyzer=` in the transport params. Tested with Pipecat 0.0.108 and 1.12.0.
+
 ## [0.1.1] - 2026-10-06
 
 ### Fixed

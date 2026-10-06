@@ -50,7 +50,21 @@ point estimates, from p99lab's own runs. Details, intervals and limits are on th
 
 ## Pipecat compatibility
 
-Tested with **Pipecat v1.12.0** (`pipecat-ai==1.12.0`), Python 3.12, turn-1-mini revision `22bcc75`.
+Tested with **Pipecat v1.12.0** and **v0.0.108**, Python 3.12, turn-1-mini revision `22bcc75`. Versions in between
+are expected to work and have not been tested.
+
+On Pipecat 0.0.x, where turn analyzers are given to the transport, pass it there instead:
+
+```python
+params = FastAPIWebsocketParams(          # or any other TransportParams
+    vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
+    turn_analyzer=LocalTurn1MiniAnalyzer(),
+    ...
+)
+```
+
+Use a short VAD `stop_secs` (about 0.2) with a turn analyzer: the VAD only proposes the moment, the model decides.
+8 kHz telephone audio (for example Twilio) is supported and is resampled internally.
 
 The integration uses Pipecat's `BaseTurnAnalyzer` interface and `TurnAnalyzerUserTurnStopStrategy`.
 

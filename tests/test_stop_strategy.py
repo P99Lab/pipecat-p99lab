@@ -6,6 +6,17 @@
 
 """The analyzer inside Pipecat's own TurnAnalyzerUserTurnStopStrategy (fake model, no network)."""
 
+import inspect
+
+import pytest
+from pipecat.processors.frame_processor import FrameProcessorSetup as _Setup
+
+# These tests drive the user-turn strategy API of Pipecat 1.x. On 0.0.x the analyzer is given to the transport.
+pytestmark = pytest.mark.skipif(
+    "pipeline_worker" not in inspect.signature(_Setup).parameters,
+    reason="needs the user-turn strategy API of Pipecat 1.x",
+)
+
 from conftest import SAMPLE_RATE, frames, silence, tone
 from pipecat.clocks.system_clock import SystemClock
 from pipecat.frames.frames import (

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pipecat-p99lab"
-version = "0.1.1"
+version = "0.1.2"
 description = "Pipecat community integration for turn-1-mini, a small streaming end-of-turn detection model by p99lab."
 readme = "README.md"
 license = "BSD-2-Clause"
@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
-    "pipecat-ai>=1.12.0,<2",
+    "pipecat-ai>=0.0.108,<2",
     "numpy>=1.26.4,<3",
     "onnxruntime>=1.17",
     "soxr>=0.5",
