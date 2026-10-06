@@ -5,7 +5,7 @@ End-of-turn detection for [Pipecat](https://github.com/pipecat-ai/pipecat) with
 and tells your bot when they have finished speaking. It runs locally on one CPU core, with no API key.
 
 ```bash
-pip install pipecat-p99lab
+pip install git+https://github.com/P99Lab/pipecat-p99lab
 ```
 
 ```python
@@ -57,7 +57,7 @@ The integration uses Pipecat's `BaseTurnAnalyzer` interface and `TurnAnalyzerUse
 ## Installation
 
 ```bash
-pip install pipecat-p99lab
+pip install git+https://github.com/P99Lab/pipecat-p99lab
 ```
 
 or from source:
