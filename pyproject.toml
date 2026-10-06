@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pipecat-p99lab"
+version = "0.1.0"
+description = "Pipecat community integration for turn-1-mini, a small streaming end-of-turn detection model by p99lab."
+readme = "README.md"
+license = "BSD-2-Clause"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "p99lab", email = "research@p99lab.com" }]
+keywords = ["pipecat", "turn-detection", "end-of-turn", "voice", "onnx"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "pipecat-ai>=1.12.0,<2",
+    "numpy>=1.26.4,<3",
+    "onnxruntime>=1.17",
+    "soxr>=0.5",
+    "huggingface_hub>=0.30",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.24"]
+example = [
+    "pipecat-ai[runner,webrtc,silero,deepgram,openai,cartesia]>=1.12.0,<2",
+    "python-dotenv>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://p99lab.com"
+Model = "https://huggingface.co/p99lab/turn-1-mini"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "network: needs the Hugging Face Hub (or a warm local cache); deselect with -m 'not network'",
+]
+
+[tool.ruff]
+line-length = 100

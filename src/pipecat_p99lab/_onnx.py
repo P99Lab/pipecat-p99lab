@@ -1,0 +1,166 @@
+#
+# Copyright (c) 2026, p99lab
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+"""ONNX streaming runner for the turn-1-mini end-of-turn model.
+
+The published graph computes one 160 ms step: it takes 2,560 samples of
+16 kHz mono audio plus the state of the previous step and returns eight
+values of P(end of turn), one per 20 ms frame, plus the new state. The 4 kHz
+low-pass and the log-mel features are inside the graph, so this module needs
+only ``numpy`` and ``onnxruntime``.
+
+Interface reference: https://huggingface.co/p99lab/turn-1-mini/blob/main/onnx/README.md
+"""
+
+import numpy as np
+from loguru import logger
+
+MODEL_SAMPLE_RATE = 16000
+STEP_SAMPLES = 2560  # 160 ms at 16 kHz
+FRAME_SAMPLES = 320  # 20 ms at 16 kHz
+FRAMES_PER_STEP = STEP_SAMPLES // FRAME_SAMPLES
+
+DEFAULT_REPO_ID = "p99lab/turn-1-mini"
+# The Hub commit this package was tested against. Pass ``revision="main"`` to
+# follow the repository instead.
+DEFAULT_REVISION = "22bcc75c9857d664ede4811cf3dfaa46be7c4376"
+
+_STATE_NAMES = ("audio", "conv1", "conv2", "k", "v", "k_valid", "h6")
+_VARIANT_FILES = {
+    "int8": "onnx/turn-1-mini.step.int8dyn.onnx",
+    "float32": "onnx/turn-1-mini.step.onnx",
+}
+
+
+def resolve_model_path(
+    *,
+    variant: str = "int8",
+    repo_id: str = DEFAULT_REPO_ID,
+    revision: str | None = DEFAULT_REVISION,
+) -> str:
+    """Return a local path to a turn-1-mini ONNX graph, downloading it once.
+
+    The Hugging Face cache is checked first without touching the network. The
+    graph is downloaded only when it is not in the cache yet.
+
+    Args:
+        variant: ``"int8"`` (7.0 MB, fastest) or ``"float32"`` (21.8 MB).
+        repo_id: Hugging Face repository that holds the graphs.
+        revision: Branch, tag or commit of the repository.
+
+    Returns:
+        Path of the ONNX file on the local disk.
+
+    Raises:
+        ValueError: If ``variant`` is not a known variant.
+    """
+    if variant not in _VARIANT_FILES:
+        raise ValueError(f"Unknown variant {variant!r}; use one of {sorted(_VARIANT_FILES)}")
+
+    from huggingface_hub import hf_hub_download
+
+    filename = _VARIANT_FILES[variant]
+    try:
+        return hf_hub_download(
+            repo_id=repo_id, filename=filename, revision=revision, local_files_only=True
+        )
+    except Exception:
+        logger.debug(f"{filename} is not in the local cache, downloading it from {repo_id}")
+        return hf_hub_download(repo_id=repo_id, filename=filename, revision=revision)
+
+
+class Turn1MiniStream:
+    """One audio stream scored by the turn-1-mini ONNX graph.
+
+    Feed 16 kHz mono float32 audio of any length with :meth:`push`; each
+    finished 160 ms step yields eight probabilities. The state tensors start
+    as zeros and are fed back unchanged after every step, as the graph
+    requires. Use one instance per audio stream.
+    """
+
+    def __init__(self, model_path: str, *, cpu_count: int = 1):
+        """Open the ONNX graph.
+
+        Args:
+            model_path: Path to one of the ``turn-1-mini.step*.onnx`` files.
+            cpu_count: Number of CPU threads for inference. One is enough for
+                a model this small.
+        """
+        import onnxruntime as ort
+
+        so = ort.SessionOptions()
+        so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        so.inter_op_num_threads = 1
+        so.intra_op_num_threads = cpu_count
+        self._session = ort.InferenceSession(
+            str(model_path), sess_options=so, providers=["CPUExecutionProvider"]
+        )
+        self._state_shapes = {
+            i.name: tuple(i.shape)
+            for i in self._session.get_inputs()
+            if i.name.startswith("state_")
+        }
+        self._outputs = ["probs"] + [f"new_state_{name}" for name in _STATE_NAMES]
+        self._state: dict[str, np.ndarray] = {}
+        self._pending = np.zeros(0, np.float32)
+        self._last = 0.0
+        self.reset()
+
+    @property
+    def last_probability(self) -> float:
+        """P(end of turn) of the most recent finished frame (0.0 after a reset)."""
+        return self._last
+
+    def reset(self):
+        """Start a new stream: zero state, no pending audio."""
+        self._state = {
+            name: np.zeros(shape, np.float32) for name, shape in self._state_shapes.items()
+        }
+        self._pending = np.zeros(0, np.float32)
+        self._last = 0.0
+
+    def _run(self, audio: np.ndarray) -> list[np.ndarray]:
+        feed = {"audio": audio.reshape(1, STEP_SAMPLES).astype(np.float32, copy=False)}
+        return self._session.run(self._outputs, {**feed, **self._state})
+
+    def push(self, chunk: np.ndarray) -> np.ndarray:
+        """Append audio and run every 160 ms step that is now complete.
+
+        Args:
+            chunk: 16 kHz mono float32 audio in [-1, 1], any length.
+
+        Returns:
+            One P(end of turn) per finished 20 ms frame, oldest first. Empty
+            until 160 ms of audio have accumulated.
+        """
+        self._pending = np.concatenate([self._pending, np.asarray(chunk, np.float32)])
+        out = []
+        while len(self._pending) >= STEP_SAMPLES:
+            result = self._run(self._pending[:STEP_SAMPLES])
+            self._state = {f"state_{name}": r for name, r in zip(_STATE_NAMES, result[1:])}
+            self._pending = self._pending[STEP_SAMPLES:]
+            self._last = float(result[0][-1])
+            out.append(result[0])
+        return np.concatenate(out) if out else np.zeros(0, np.float32)
+
+    def peek(self) -> float:
+        """P(end of turn) right now, without waiting for the next step boundary.
+
+        Audio that has not filled a step yet is padded with zeros and run on a
+        copy of the state; the stream itself is left untouched, so the real
+        step still runs when the rest of the chunk arrives. The value returned
+        is the one for the last frame made entirely of real audio.
+
+        Returns:
+            The current P(end of turn).
+        """
+        frames = len(self._pending) // FRAME_SAMPLES
+        if frames == 0:
+            return self._last
+        padded = np.zeros(STEP_SAMPLES, np.float32)
+        padded[: len(self._pending)] = self._pending
+        # session.run does not modify its inputs, so the stream state is kept.
+        return float(self._run(padded)[0][frames - 1])
