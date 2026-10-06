@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 
-"""Integration test with the real 7 MB ONNX graph from the Hugging Face Hub.
+"""Integration tests with the real turn-1-mini ONNX graph from the Hugging Face Hub.
 
 Needs the network the first time (afterwards the local cache is enough).
 Skip it offline with:  pytest -m "not network"
@@ -24,8 +24,8 @@ pytestmark = pytest.mark.network
 @pytest.fixture(scope="module")
 def model_path() -> str:
     try:
-        return resolve_model_path(variant="int8")
-    except Exception as e:  # no network and nothing cached
+        return resolve_model_path()
+    except RuntimeError as e:  # no network and nothing cached
         pytest.skip(f"turn-1-mini could not be loaded from the Hub: {e}")
 
 
@@ -92,3 +92,41 @@ def test_analyzer_declares_end_of_turn_from_the_model_not_the_timeout(model_path
             break
     assert state == EndOfTurnState.COMPLETE
     assert silence_ms < 1500  # well before the 3 s stop_secs fallback
+
+
+@pytest.mark.parametrize("rate", [8000, 16000, 24000, 48000])
+def test_real_model_ends_the_turn_at_every_common_input_rate(model_path, rate):
+    import soxr
+
+    analyzer = LocalTurn1MiniAnalyzer(model_path=model_path, params=Turn1MiniParams(threshold=0.4))
+    analyzer.set_sample_rate(rate)
+
+    def pcm_frames(audio):
+        if rate != SAMPLE_RATE:
+            audio = soxr.resample(audio, SAMPLE_RATE, rate, quality="HQ")
+        pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+        size = rate // 50
+        for start in range(0, len(pcm) - size + 1, size):
+            yield pcm[start : start + size].tobytes()
+
+    for frame in pcm_frames(synthetic_speech(3.0)):
+        assert analyzer.append_audio(frame, True) == EndOfTurnState.INCOMPLETE
+    silence_ms, state = 0, EndOfTurnState.INCOMPLETE
+    for frame in pcm_frames(quiet(3.0)):
+        silence_ms += 20
+        state = analyzer.append_audio(frame, False)
+        if state == EndOfTurnState.COMPLETE:
+            break
+    assert state == EndOfTurnState.COMPLETE
+    assert silence_ms < 1500
+
+
+def test_int8_variant_loads_and_scores_close_to_the_default(model_path):
+    try:
+        int8_path = resolve_model_path(variant="int8")
+    except RuntimeError as e:
+        pytest.skip(str(e))
+    audio = np.concatenate([synthetic_speech(3.0), quiet(1.0)])
+    a = Turn1MiniStream(model_path).push(audio)
+    b = Turn1MiniStream(int8_path).push(audio)
+    assert np.abs(a - b).max() < 0.15

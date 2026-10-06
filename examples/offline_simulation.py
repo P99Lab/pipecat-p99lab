@@ -142,9 +142,11 @@ def main():
     parser.add_argument(
         "audio", help="A speech recording (wav or flac; resampled to --sample-rate)"
     )
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--threshold", type=float, default=0.5, help="fast 0.2, balanced 0.5 (default), patient 0.7"
+    )
     parser.add_argument("--stop-secs", type=float, default=3.0)
-    parser.add_argument("--variant", default="int8", choices=["int8", "float32"])
+    parser.add_argument("--variant", default="float32", choices=["float32", "int8"])
     parser.add_argument(
         "--sample-rate",
         type=int,

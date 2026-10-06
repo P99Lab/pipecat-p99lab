@@ -37,12 +37,15 @@ PRE_SPEECH_MS = 500
 class Turn1MiniParams(BaseTurnParams):
     """Configuration parameters for turn-1-mini turn analysis.
 
+    Start from one of the presets, :meth:`fast`, :meth:`balanced` (the
+    default) or :meth:`patient`, or set ``threshold`` yourself.
+
     Parameters:
         threshold: P(end of turn) at or above which the turn is complete
             (0.0 to 1.0). The model's scores are not calibrated: tune this on
             your own audio. Lower values respond sooner and cut in more often.
-        stop_secs: Maximum silence duration in seconds before ending the turn
-            regardless of the model's score.
+        stop_secs: Safety timeout: silence duration in seconds after which the
+            turn ends regardless of the model's score.
         pre_speech_ms: Milliseconds of audio before the detected start of
             speech that are given to the model as context.
     """
@@ -50,6 +53,59 @@ class Turn1MiniParams(BaseTurnParams):
     threshold: float = THRESHOLD
     stop_secs: float = STOP_SECS
     pre_speech_ms: float = PRE_SPEECH_MS
+
+    # The figures in the presets below were measured by p99lab on its own
+    # development audio (English phone-call turns: 608 turns, 379 mid-turn
+    # pauses of 0.2 to 5 s), run through Pipecat's Silero VAD and this analyzer
+    # with stop_secs=3. "Wrong endings" is the share of mid-turn pauses in
+    # which the turn was ended; the delay runs from the end of speech to the
+    # end-of-turn decision and includes the VAD's 0.2 s stop delay. Your audio
+    # will differ: treat them as a starting point.
+
+    @classmethod
+    def fast(cls, **overrides) -> "Turn1MiniParams":
+        """Answer as soon as possible (threshold 0.2).
+
+        Measured: 16.4% wrong endings; delay 200 ms at the median and 200 ms at
+        the 90th percentile.
+
+        Args:
+            **overrides: Any other parameter to set, e.g. ``stop_secs``.
+
+        Returns:
+            The preset parameters.
+        """
+        return cls(**{"threshold": 0.2, **overrides})
+
+    @classmethod
+    def balanced(cls, **overrides) -> "Turn1MiniParams":
+        """The default (threshold 0.5).
+
+        Measured: 11.3% wrong endings; delay 200 ms at the median and 750 ms at
+        the 90th percentile.
+
+        Args:
+            **overrides: Any other parameter to set, e.g. ``stop_secs``.
+
+        Returns:
+            The preset parameters.
+        """
+        return cls(**{"threshold": 0.5, **overrides})
+
+    @classmethod
+    def patient(cls, **overrides) -> "Turn1MiniParams":
+        """Interrupt least; wait out more pauses (threshold 0.7).
+
+        Measured: 7.9% wrong endings; delay 200 ms at the median, and about one
+        turn in ten ends only at the ``stop_secs`` timeout (3 s).
+
+        Args:
+            **overrides: Any other parameter to set, e.g. ``stop_secs``.
+
+        Returns:
+            The preset parameters.
+        """
+        return cls(**{"threshold": 0.7, **overrides})
 
 
 class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
@@ -63,16 +119,16 @@ class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
     stop, then after every 160 ms step. If the score never reaches the
     threshold, the turn ends after ``params.stop_secs`` of silence.
 
-    Inference runs on the CPU inside ``append_audio`` (about 1 ms per 160 ms
-    of audio for the default graph). After the model file is in the local
-    Hugging Face cache, nothing touches the network.
+    Inference runs on the CPU inside ``append_audio`` (about 1 to 2 ms per
+    160 ms of audio on one core). After the model file is in the local Hugging
+    Face cache, nothing touches the network.
     """
 
     def __init__(
         self,
         *,
         model_path: str | None = None,
-        variant: str = "int8",
+        variant: str = "float32",
         repo_id: str = DEFAULT_REPO_ID,
         revision: str | None = DEFAULT_REVISION,
         cpu_count: int = 1,
@@ -86,7 +142,8 @@ class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
                 not set, the graph is taken from the local Hugging Face cache
                 and downloaded on first use.
             variant: Which published graph to load when ``model_path`` is not
-                set: ``"int8"`` (7.0 MB, default) or ``"float32"`` (21.8 MB).
+                set: ``"float32"`` (21.8 MB, default, the benchmarked weights)
+                or ``"int8"`` (7.0 MB, 8-bit weights, faster).
             repo_id: Hugging Face repository to load the graph from.
             revision: Branch, tag or commit of the repository. Defaults to the
                 commit this package was tested against.

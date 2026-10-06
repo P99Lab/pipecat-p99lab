@@ -87,14 +87,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     )
 
     # turn-1-mini decides when the user's turn is over. The first run downloads
-    # the 7 MB model from Hugging Face; later runs use the local cache.
-    # The scores are not calibrated: tune `threshold` on your own audio.
-    turn_analyzer = LocalTurn1MiniAnalyzer(
-        params=Turn1MiniParams(
-            threshold=0.5,
-            stop_secs=3.0,
-        )
-    )
+    # the model (22 MB) from Hugging Face; later runs use the local cache.
+    # Presets: Turn1MiniParams.fast(), .balanced() (the default), .patient().
+    turn_analyzer = LocalTurn1MiniAnalyzer(params=Turn1MiniParams.balanced())
 
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(

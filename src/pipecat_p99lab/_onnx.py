@@ -30,14 +30,15 @@ DEFAULT_REVISION = "22bcc75c9857d664ede4811cf3dfaa46be7c4376"
 
 _STATE_NAMES = ("audio", "conv1", "conv2", "k", "v", "k_valid", "h6")
 _VARIANT_FILES = {
-    "int8": "onnx/turn-1-mini.step.int8dyn.onnx",
     "float32": "onnx/turn-1-mini.step.onnx",
+    "int8": "onnx/turn-1-mini.step.int8dyn.onnx",
 }
+_VARIANT_SIZES = {"float32": "22 MB", "int8": "7 MB"}
 
 
 def resolve_model_path(
     *,
-    variant: str = "int8",
+    variant: str = "float32",
     repo_id: str = DEFAULT_REPO_ID,
     revision: str | None = DEFAULT_REVISION,
 ) -> str:
@@ -47,7 +48,8 @@ def resolve_model_path(
     graph is downloaded only when it is not in the cache yet.
 
     Args:
-        variant: ``"int8"`` (7.0 MB, fastest) or ``"float32"`` (21.8 MB).
+        variant: ``"float32"`` (21.8 MB, the benchmarked weights) or
+            ``"int8"`` (7.0 MB, 8-bit weights, faster).
         repo_id: Hugging Face repository that holds the graphs.
         revision: Branch, tag or commit of the repository.
 
@@ -56,20 +58,35 @@ def resolve_model_path(
 
     Raises:
         ValueError: If ``variant`` is not a known variant.
+        RuntimeError: If the graph is not cached and cannot be downloaded.
     """
     if variant not in _VARIANT_FILES:
         raise ValueError(f"Unknown variant {variant!r}; use one of {sorted(_VARIANT_FILES)}")
 
     from huggingface_hub import hf_hub_download
 
-    filename = _VARIANT_FILES[variant]
+    filename, size = _VARIANT_FILES[variant], _VARIANT_SIZES[variant]
     try:
         return hf_hub_download(
             repo_id=repo_id, filename=filename, revision=revision, local_files_only=True
         )
     except Exception:
-        logger.debug(f"{filename} is not in the local cache, downloading it from {repo_id}")
-        return hf_hub_download(repo_id=repo_id, filename=filename, revision=revision)
+        pass
+
+    logger.info(
+        f"Downloading turn-1-mini ({size}) from https://huggingface.co/{repo_id}. "
+        "This happens once; later runs use the local cache and work offline."
+    )
+    try:
+        path = hf_hub_download(repo_id=repo_id, filename=filename, revision=revision)
+    except Exception as e:
+        raise RuntimeError(
+            f"turn-1-mini is not in the local Hugging Face cache and could not be downloaded "
+            f"from {repo_id} ({e}). Connect to the network once, or pass model_path= with a "
+            f"local copy of {filename.split('/')[-1]}."
+        ) from e
+    logger.info(f"turn-1-mini saved to {path}")
+    return path
 
 
 class Turn1MiniStream:
@@ -89,7 +106,13 @@ class Turn1MiniStream:
             cpu_count: Number of CPU threads for inference. One is enough for
                 a model this small.
         """
-        import onnxruntime as ort
+        try:
+            import onnxruntime as ort
+        except ModuleNotFoundError as e:
+            raise ImportError(
+                "LocalTurn1MiniAnalyzer needs onnxruntime to run turn-1-mini. "
+                "Install it with: pip install onnxruntime"
+            ) from e
 
         so = ort.SessionOptions()
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL

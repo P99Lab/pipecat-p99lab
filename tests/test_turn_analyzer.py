@@ -167,8 +167,12 @@ async def test_clear_drops_an_unread_complete(make_analyzer):
     assert await analyzer.analyze_end_of_turn() == (EndOfTurnState.INCOMPLETE, None)
 
 
-@pytest.mark.parametrize("rate", [8000, 24000, 48000])
-def test_other_sample_rates_are_resampled_to_16k(make_analyzer, fake_stream, rate):
+@pytest.mark.parametrize("rate", [8000, 16000, 24000, 48000])
+def test_every_common_sample_rate_reaches_the_model_at_16k(make_analyzer, fake_stream, rate):
+    from loguru import logger
+
+    complaints = []
+    sink = logger.add(lambda message: complaints.append(str(message)), level="WARNING")
     analyzer = make_analyzer(sample_rate=rate, params=Turn1MiniParams(pre_speech_ms=0))
     assert analyzer.sample_rate == rate
     feed(analyzer, tone(2.0, rate), is_speech=True, sample_rate=rate)
@@ -177,6 +181,21 @@ def test_other_sample_rates_are_resampled_to_16k(make_analyzer, fake_stream, rat
     state, at = feed(analyzer, silence(2.0, rate), is_speech=False, sample_rate=rate)
     assert state == EndOfTurnState.COMPLETE
     assert at == pytest.approx(0.6, abs=0.2)
+    logger.remove(sink)
+    assert complaints == []  # resampling needs no configuration and makes no noise
+
+
+def test_presets():
+    assert Turn1MiniParams() == Turn1MiniParams.balanced()
+    assert Turn1MiniParams.fast().threshold == 0.2
+    assert Turn1MiniParams.balanced().threshold == 0.5
+    assert Turn1MiniParams.patient().threshold == 0.7
+    assert Turn1MiniParams.fast().threshold < Turn1MiniParams.patient().threshold
+    for preset in (Turn1MiniParams.fast, Turn1MiniParams.balanced, Turn1MiniParams.patient):
+        assert preset().stop_secs == 3  # the safety timeout stays on
+        assert preset(stop_secs=1.5).stop_secs == 1.5
+        assert "Measured" in preset.__doc__
+    assert Turn1MiniParams.fast(threshold=0.1).threshold == 0.1
 
 
 def test_stop_secs_counts_time_at_the_input_rate(make_analyzer, fake_stream):

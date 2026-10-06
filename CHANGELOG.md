@@ -10,7 +10,9 @@ All notable changes to `pipecat-p99lab` are documented here. The format follows
 
 - `LocalTurn1MiniAnalyzer`: a Pipecat turn analyzer that runs the turn-1-mini
   ONNX model locally as a stream on the user's audio.
-- `Turn1MiniParams`: `threshold`, `stop_secs` and `pre_speech_ms`.
+- `Turn1MiniParams`: `threshold`, `stop_secs` and `pre_speech_ms`, with three
+  presets: `fast()` (0.2), `balanced()` (0.5, the default) and `patient()` (0.7).
+- The float32 graph is the default; `variant="int8"` selects the 7 MB graph.
 - Foundational example: `examples/foundational/turn-management-turn-1-mini.py`.
 - Offline simulation that needs no API keys: `examples/offline_simulation.py`.
 - Tested with Pipecat v1.12.0 and turn-1-mini revision `22bcc75`.

@@ -85,13 +85,15 @@ def test_peek_with_less_than_one_frame_pending_returns_the_last_score(stream):
     assert stream._session.runs == runs
 
 
-def _fake_hub(monkeypatch, cached: bool):
+def _fake_hub(monkeypatch, cached: bool, online: bool = True):
     calls = []
 
     def hf_hub_download(**kwargs):
         calls.append(kwargs)
         if kwargs.get("local_files_only") and not cached:
             raise FileNotFoundError("not cached")
+        if not kwargs.get("local_files_only") and not online:
+            raise ConnectionError("no network")
         return "/cache/" + kwargs["filename"]
 
     monkeypatch.setitem(
@@ -100,18 +102,43 @@ def _fake_hub(monkeypatch, cached: bool):
     return calls
 
 
-def test_loader_uses_the_cache_without_network_when_the_file_is_there(monkeypatch):
+@pytest.fixture
+def log_lines():
+    from loguru import logger
+
+    lines = []
+    sink = logger.add(lambda message: lines.append(str(message)), level="DEBUG")
+    yield lines
+    logger.remove(sink)
+
+
+def test_loader_uses_the_cache_without_network_when_the_file_is_there(monkeypatch, log_lines):
     calls = _fake_hub(monkeypatch, cached=True)
-    assert resolve_model_path() == "/cache/onnx/turn-1-mini.step.int8dyn.onnx"
+    assert resolve_model_path() == "/cache/onnx/turn-1-mini.step.onnx"  # float32 is the default
     assert len(calls) == 1 and calls[0]["local_files_only"] is True
     assert calls[0]["repo_id"] == "p99lab/turn-1-mini"
     assert calls[0]["revision"] == _onnx.DEFAULT_REVISION
+    assert not any("Downloading" in line for line in log_lines)
 
 
-def test_loader_downloads_once_when_the_file_is_missing(monkeypatch):
+def test_loader_downloads_once_and_says_so_when_the_file_is_missing(monkeypatch, log_lines):
     calls = _fake_hub(monkeypatch, cached=False)
-    assert resolve_model_path(variant="float32") == "/cache/onnx/turn-1-mini.step.onnx"
+    assert resolve_model_path(variant="int8") == "/cache/onnx/turn-1-mini.step.int8dyn.onnx"
     assert len(calls) == 2 and "local_files_only" not in calls[1]
+    downloading = [line for line in log_lines if "Downloading turn-1-mini (7 MB)" in line]
+    assert len(downloading) == 1 and "INFO" in downloading[0] and "once" in downloading[0]
+
+
+def test_loader_explains_what_to_do_when_offline_and_not_cached(monkeypatch):
+    _fake_hub(monkeypatch, cached=False, online=False)
+    with pytest.raises(RuntimeError, match="model_path="):
+        resolve_model_path()
+
+
+def test_missing_onnxruntime_gives_a_clear_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)  # makes `import onnxruntime` fail
+    with pytest.raises(ImportError, match="pip install onnxruntime"):
+        Turn1MiniStream("unused.onnx")
 
 
 def test_loader_rejects_unknown_variants():
