@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pipecat-p99lab"
-version = "0.1.0"
+version = "0.1.1"
 description = "Pipecat community integration for turn-1-mini, a small streaming end-of-turn detection model by p99lab."
 readme = "README.md"
 license = "BSD-2-Clause"

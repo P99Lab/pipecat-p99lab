@@ -130,3 +130,25 @@ def test_int8_variant_loads_and_scores_close_to_the_default(model_path):
     a = Turn1MiniStream(model_path).push(audio)
     b = Turn1MiniStream(int8_path).push(audio)
     assert np.abs(a - b).max() < 0.15
+
+
+def test_bad_samples_do_not_poison_the_stream():
+    """NaN, infinity and out-of-range samples must not corrupt later steps."""
+    import numpy as np
+
+    from pipecat_p99lab._onnx import STEP_SAMPLES, Turn1MiniStream, resolve_model_path
+
+    rng = np.random.default_rng(0)
+    good = (0.05 * rng.standard_normal(STEP_SAMPLES)).astype(np.float32)
+    clean = Turn1MiniStream(resolve_model_path())
+    dirty = Turn1MiniStream(resolve_model_path())
+    for bad in (
+        np.full(STEP_SAMPLES, np.nan, np.float32),
+        np.full(STEP_SAMPLES, np.inf, np.float32),
+        (50 * rng.standard_normal(STEP_SAMPLES)).astype(np.float32),
+    ):
+        assert np.isfinite(dirty.push(bad)).all()
+    for _ in range(100):  # 16 s: longer than the model's memory (six layers of 1.2 s each)
+        a, b = clean.push(good), dirty.push(good)
+    assert np.isfinite(b).all()
+    assert np.abs(a - b).max() < 1e-3  # the stream has fully recovered

@@ -159,12 +159,24 @@ class Turn1MiniStream:
             One P(end of turn) per finished 20 ms frame, oldest first. Empty
             until 160 ms of audio have accumulated.
         """
-        self._pending = np.concatenate([self._pending, np.asarray(chunk, np.float32)])
+        # Bad samples (NaN, infinity, values far outside [-1, 1]) would otherwise
+        # enter the cached state and corrupt every later step of the stream.
+        samples = np.nan_to_num(np.asarray(chunk, np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        np.clip(samples, -1.0, 1.0, out=samples)
+        self._pending = np.concatenate([self._pending, samples])
         out = []
         while len(self._pending) >= STEP_SAMPLES:
             result = self._run(self._pending[:STEP_SAMPLES])
-            self._state = {f"state_{name}": r for name, r in zip(_STATE_NAMES, result[1:])}
             self._pending = self._pending[STEP_SAMPLES:]
+            if not all(np.isfinite(r).all() for r in result):
+                # Should not happen after the clean-up above; if it does, start
+                # over from a zero state rather than emit garbage.
+                pending = self._pending
+                self.reset()
+                self._pending = pending
+                out.append(np.zeros(FRAMES_PER_STEP, np.float32))
+                continue
+            self._state = {f"state_{name}": r for name, r in zip(_STATE_NAMES, result[1:])}
             self._last = float(result[0][-1])
             out.append(result[0])
         return np.concatenate(out) if out else np.zeros(0, np.float32)

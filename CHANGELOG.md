@@ -4,6 +4,13 @@ All notable changes to `pipecat-p99lab` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-06
+
+### Fixed
+
+- Audio chunks containing NaN, infinity or samples far outside [-1, 1] no longer corrupt the stream's cached
+  state: bad samples are zeroed or clipped before the model sees them.
+
 ## [0.1.0] - 2026-10-06
 
 ### Added
