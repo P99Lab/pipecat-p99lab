@@ -48,11 +48,19 @@ class Turn1MiniParams(BaseTurnParams):
             turn ends regardless of the model's score.
         pre_speech_ms: Milliseconds of audio before the detected start of
             speech that are given to the model as context.
+        fallback_secs: Optional earlier, softer timeout. After this many
+            seconds of silence the turn ends if the highest score seen in that
+            silence is at least ``fallback_threshold``. Shortens the wait on
+            endings the model scores low without ending pauses it scores near
+            zero. Off (None) by default.
+        fallback_threshold: The score the fallback requires (0.0 to 1.0).
     """
 
     threshold: float = THRESHOLD
     stop_secs: float = STOP_SECS
     pre_speech_ms: float = PRE_SPEECH_MS
+    fallback_secs: float | None = None
+    fallback_threshold: float = 0.1
 
     # The figures in the presets below were measured by p99lab on its own
     # development audio (English phone-call turns: 608 turns, 379 mid-turn
@@ -172,6 +180,8 @@ class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
 
         self._speech_triggered = False
         self._silence_ms = 0.0
+        # Highest score seen in the current silence, for the fallback.
+        self._silence_peak = 0.0
         self._speech_stopped_time: float | None = None
         self._last_probability: float | None = None
         # Result of a COMPLETE decided in append_audio, handed out by the next
@@ -246,6 +256,7 @@ class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
             if not self._speech_triggered:
                 self._start_turn()
             self._silence_ms = 0.0
+            self._silence_peak = 0.0
             self._speech_stopped_time = None
             self._score(audio)
             return EndOfTurnState.INCOMPLETE
@@ -260,9 +271,24 @@ class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
         self._silence_ms += len(audio_int16) / (input_rate / 1000)
 
         probability = self._score(audio)
+        if probability is not None:
+            self._silence_peak = max(self._silence_peak, probability)
         if probability is not None and probability >= self._params.threshold:
             logger.debug(f"End of Turn complete, probability: {probability:.4f}")
             self._complete(probability)
+            return EndOfTurnState.COMPLETE
+
+        fallback_secs = self._params.fallback_secs
+        if (
+            fallback_secs is not None
+            and self._silence_ms >= fallback_secs * 1000
+            and self._silence_peak >= self._params.fallback_threshold
+        ):
+            logger.debug(
+                f"End of Turn complete by fallback. Silence in ms: {self._silence_ms}, "
+                f"peak probability: {self._silence_peak:.4f}"
+            )
+            self._complete(self._silence_peak)
             return EndOfTurnState.COMPLETE
 
         if self._silence_ms >= self._params.stop_secs * 1000:
@@ -300,6 +326,7 @@ class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
 
         probability = self._model.peek()
         self._last_probability = probability
+        self._silence_peak = max(self._silence_peak, probability)
         is_complete = probability >= self._params.threshold
         metrics = self._metrics(is_complete, probability)
         logger.debug(
@@ -379,6 +406,7 @@ class LocalTurn1MiniAnalyzer(BaseTurnAnalyzer):
         """Drop all per-turn state. The next speech starts a new model stream."""
         self._speech_triggered = False
         self._silence_ms = 0.0
+        self._silence_peak = 0.0
         self._speech_stopped_time = None
         self._pre_speech.clear()
         self._pre_speech_samples = 0

@@ -132,6 +132,43 @@ async def test_stop_secs_ends_the_turn_when_the_score_stays_low(make_analyzer, f
     assert await analyzer.analyze_end_of_turn() == (EndOfTurnState.COMPLETE, None)
 
 
+async def test_fallback_ends_a_weakly_scored_ending_early(make_analyzer, fake_stream):
+    # The score creeps up 0.1 per second: it never reaches 0.5, but after
+    # 1.5 s of silence its peak is above the fallback's 0.1.
+    fake_stream.rise_per_sec = 0.1
+    analyzer = make_analyzer(params=Turn1MiniParams(fallback_secs=1.5, pre_speech_ms=0))
+    feed(analyzer, tone(1.6), is_speech=True)
+    state, at = feed(analyzer, silence(3.5), is_speech=False)
+    assert state == EndOfTurnState.COMPLETE
+    assert at == pytest.approx(1.5, abs=0.021)
+    state, metrics = await analyzer.analyze_end_of_turn()
+    assert state == EndOfTurnState.COMPLETE
+    assert 0.1 <= metrics.probability < 0.5
+
+
+def test_fallback_leaves_a_pause_scored_near_zero_to_stop_secs(make_analyzer, fake_stream):
+    fake_stream.rise_per_sec = 0.01
+    analyzer = make_analyzer(params=Turn1MiniParams(fallback_secs=1.5, pre_speech_ms=0))
+    feed(analyzer, tone(1.6), is_speech=True)
+    state, at = feed(analyzer, silence(3.5), is_speech=False)
+    assert state == EndOfTurnState.COMPLETE
+    assert at == pytest.approx(3.0, abs=0.021)
+
+
+def test_fallback_is_off_by_default_and_peak_restarts_with_speech(make_analyzer, fake_stream):
+    fake_stream.rise_per_sec = 0.1
+    analyzer = make_analyzer(params=Turn1MiniParams(pre_speech_ms=0))
+    feed(analyzer, tone(1.6), is_speech=True)
+    assert feed(analyzer, silence(2.5), is_speech=False)[0] == EndOfTurnState.INCOMPLETE
+
+    analyzer = make_analyzer(params=Turn1MiniParams(fallback_secs=1.5, pre_speech_ms=0))
+    feed(analyzer, tone(1.6), is_speech=True)
+    assert feed(analyzer, silence(1.4), is_speech=False)[0] == EndOfTurnState.INCOMPLETE
+    feed(analyzer, tone(0.5), is_speech=True)
+    # A new silence starts from scratch: 1.4 s is again too short.
+    assert feed(analyzer, silence(1.4), is_speech=False)[0] == EndOfTurnState.INCOMPLETE
+
+
 def test_speech_resuming_restarts_the_silence_clock_but_not_the_stream(make_analyzer, fake_stream):
     fake_stream.rise_per_sec = 0.0
     analyzer = make_analyzer(params=Turn1MiniParams(stop_secs=1.0, pre_speech_ms=0))

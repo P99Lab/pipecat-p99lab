@@ -170,6 +170,8 @@ prints when the end of the turn is declared.
 | `threshold` | `0.5` | P(end of turn) at or above which the turn is complete. Lower answers sooner and cuts in more often |
 | `stop_secs` | `3.0` | Safety timeout: silence after which the turn ends whatever the model says |
 | `pre_speech_ms` | `500` | Audio from before the detected start of speech that the model gets as context |
+| `fallback_secs` | `None` (off) | Earlier, softer timeout: after this much silence the turn ends if the highest score in that silence reached `fallback_threshold`. See [Long waits after an ending](#long-waits-after-an-ending) |
+| `fallback_threshold` | `0.1` | The score the fallback requires |
 
 `LocalTurn1MiniAnalyzer(...)`:
 
@@ -222,7 +224,27 @@ What to take from it:
   for the model's next 160 ms step) and ends the turn if it is at or above `threshold`.
 - If not, it keeps streaming the silence and checks the newest score after every 160 ms step.
 - If the user starts speaking again, the turn simply continues.
-- If the score never reaches the threshold, the turn ends after `stop_secs` of silence.
+- If the score never reaches the threshold, the turn ends after `stop_secs` of silence, or earlier by the fallback
+  if `fallback_secs` is set.
+
+### Long waits after an ending
+
+The model scores some real endings below the threshold, most often short answers such as a name or a number. Those
+turns then wait for the `stop_secs` timeout. Mid-sentence pauses usually score far lower (near zero), which the
+fallback uses: `Turn1MiniParams(fallback_secs=1.3)` ends the turn after 1.3 s of silence if the score reached 0.1 at
+any point in that silence, and leaves pauses scored below 0.1 to `stop_secs`.
+
+Measured at the default threshold, same method as the table above (silence counted from the VAD's stop):
+
+| Audio | | Wrong endings | Turns ended by the 3 s timeout | Delay p90 |
+|---|---|---:|---:|---:|
+| Phone-call turns | off | 11.3% | 3.6% | 746 ms |
+| | `fallback_secs=1.3` | 13.5% | 0.5% | 746 ms |
+| Short telephone answers (names, numbers, postcodes) | off | 14.5% | 24.7% | 3,200 ms |
+| | `fallback_secs=1.3` | 16.5% | 7.6% | 1,620 ms |
+
+It is off by default because it adds about 2 points of wrong endings. Turn it on if your users give short answers
+and silence after them costs more than an occasional early reply.
 
 The VAD's own `stop_secs` (0.2 s by default in Pipecat) is therefore the shortest silence after which a turn can end.
 
